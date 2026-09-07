@@ -1,0 +1,17 @@
+{
+  "name": "obsidian-scriben",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scriben plugin for Obsidian — meetings in, chosen notes out.",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.6.0"
+  }
+}

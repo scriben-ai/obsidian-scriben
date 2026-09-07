@@ -1,0 +1,12 @@
+/* The pairing code is the only thing on screen that matters while it is shown. */
+.scriben-pair-code {
+  font: 600 26px/1.4 var(--font-monospace);
+  letter-spacing: 0.18em;
+  text-align: center;
+  margin: 14px 0;
+  user-select: all;
+}
+.scriben-hint {
+  opacity: 0.65;
+  font-size: 12px;
+}
