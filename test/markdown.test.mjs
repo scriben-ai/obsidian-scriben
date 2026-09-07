@@ -75,3 +75,70 @@ test('userRegion returns what the user wrote and nothing of ours', () => {
   assert.ok(!u.includes('ours'));
   assert.ok(!u.includes('scriben_ref'));
 });
+
+// ---------------------------------------------------------------------------
+// The note a person actually opens the next morning.
+
+const rich = {
+  summary: 'Northwind will take 40 seats if billing moves to annual. Lena raised SSO as a blocker.',
+  actionItems: [
+    { text: 'Send the revised quote for 40 seats', owner: 'agam', due: '2026-09-10T00:00:00Z' },
+    { text: 'Confirm SSO timeline with engineering' },
+  ],
+  mentions: [{ name: 'Daniel Okafor' }, { name: 'Lena Fischer' }],
+  flagged: [{ text: 'Discount above 15% needs sign-off' }],
+  memories: [{ text: 'Daniel Okafor owns the budget for the Northwind deal.' }],
+};
+
+test('a synced note is structured the way a meeting is read back', () => {
+  const body = managedBody(note, rich);
+  // Order matters: what happened, what I owe, what is unresolved, who was
+  // named, what Scriben now knows.
+  const order = ['## Summary', '## Action items', '## Needs a decision', '## People', '## What Scriben remembers']
+    .map(h => body.indexOf(h));
+  expect: for (let i = 1; i < order.length; i++) {
+    assert.ok(order[i] > order[i - 1] && order[i - 1] !== -1, `sections out of order at ${i}`);
+  }
+});
+
+test('the metadata callout puts the facts in reading view, not just properties', () => {
+  const body = managedBody(note, rich);
+  assert.match(body, /^> \[!info\] 2026-09-06 · Pricing review · Daniel Okafor, Lena Fischer$/m);
+});
+
+test('an action item carries its owner and due date without inventing either', () => {
+  const body = managedBody(note, rich);
+  assert.match(body, /- \[ \] Send the revised quote for 40 seats {2}@agam 📅 2026-09-10/);
+  // The second item has neither, and must not sprout an empty @ or 📅.
+  assert.match(body, /- \[ \] Confirm SSO timeline with engineering$/m);
+});
+
+test('people become wikilinks, which is the thing a vault can do that a transcript cannot', () => {
+  const body = managedBody(note, rich);
+  assert.ok(body.includes('- [[Daniel Okafor]]'));
+  assert.ok(body.includes('- [[Lena Fischer]]'));
+});
+
+test('a name containing wikilink syntax cannot break out of the link', () => {
+  const body = managedBody(note, { mentions: [{ name: 'Ana [[Ruiz]] | x' }] });
+  assert.ok(body.includes('- [[Ana Ruiz x]]'), body.slice(body.indexOf('## People')));
+});
+
+test('empty sections are omitted, not printed as bare headings', () => {
+  const body = managedBody(note, { summary: 'Just a summary.' });
+  assert.ok(body.includes('## Summary'));
+  for (const h of ['## Action items', '## Needs a decision', '## People', '## What Scriben remembers']) {
+    assert.ok(!body.includes(h), `${h} rendered with nothing under it`);
+  }
+});
+
+test('frontmatter dates are a real Obsidian date property, not a quoted string', () => {
+  const fm = frontMatter(note, 'h');
+  // Quoted or full-ISO and it is just text: it drops out of every dated query.
+  assert.match(fm, /^date: 2026-09-06$/m);
+  assert.match(fm, /^tags:\n  - scriben\n  - meeting$/m);
+});
+
+test('a note with no usable date omits the property rather than writing garbage', () => {
+  assert.ok(!frontMatter({ ...note, date: 'sometime' }, 'h').includes('date:'));
+});

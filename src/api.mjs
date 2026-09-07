@@ -61,6 +61,8 @@ export class ScribenApi {
   listNotes(limit = 50) { return this.tool('list_notes', { limit }); }
   summary(ref) { return this.tool('get_summary', { ref }); }
   actionItems(ref) { return this.tool('get_action_items', { ref }); }
+  /** What Scriben knows that is relevant to this meeting, for the memory block. */
+  recall(query) { return this.tool('recall_memory', { query: String(query || ''), limit: 6 }); }
 
   /** The read direction. Absent on an older server, which the caller must handle. */
   pushVaultNotes(notes) {

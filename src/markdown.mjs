@@ -53,26 +53,92 @@ export function frontMatter(note, hash) {
     `scriben_hash: ${yamlString(hash)}`,
     `title: ${yamlString(note.title ?? '')}`,
   ];
-  if (note.date) lines.push(`date: ${yamlString(note.date)}`);
+  // Bare `yyyy-mm-dd` and no quotes: Obsidian parses that as a real date
+  // property, which is what makes the note show up in a dated query. A quoted
+  // ISO timestamp is just a string and silently drops out of every one.
+  const day = String(note.date ?? '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) lines.push(`date: ${day}`);
   if (note.type) lines.push(`type: ${yamlString(note.type)}`);
   lines.push(`participants:${yamlList(note.participants)}`);
+  lines.push('tags:\n  - scriben\n  - meeting');
   lines.push('---');
   return lines.join('\n');
 }
 
-/** The part of the file we own. Deterministic: same note in, same bytes out. */
-export function managedBody(note, { summary = null, actionItems = [] } = {}) {
+/**
+ * The part of the file we own. Deterministic: same note in, same bytes out.
+ *
+ * Section order follows how a meeting note is actually read afterwards: what
+ * happened, what I owe, who was named, what Scriben now knows. Empty sections
+ * are omitted rather than printed as headings with nothing under them — a run
+ * of empty headings makes a note look broken, and Obsidian's outline fills with
+ * dead entries.
+ */
+export function managedBody(note, {
+  summary = null, actionItems = [], mentions = [], memories = [], flagged = [],
+} = {}) {
   const out = [BEGIN, '', `# ${note.title ?? 'Untitled meeting'}`, ''];
+
+  // One metadata line as a callout, so the facts are visible in reading view
+  // without opening the properties panel.
+  const meta = [
+    String(note.date ?? '').slice(0, 10),
+    note.type || null,
+    note.participants?.length ? note.participants.join(', ') : null,
+  ].filter(Boolean);
+  if (meta.length) out.push(`> [!info] ${meta.join(' · ')}`, '');
+
   if (summary) out.push('## Summary', '', String(summary).trim(), '');
+
   if (actionItems.length) {
     out.push('## Action items', '');
-    // Unchecked boxes, because Scriben has no completion state to report. A
-    // pre-ticked item would be a claim we cannot back, and an unticked one the
-    // user ticks is theirs — it lives inside the managed block, so say so.
-    for (const a of actionItems) out.push(`- [ ] ${String(a.text ?? a).trim()}`);
+    // Unchecked, always: Scriben has no completion state to report, so a ticked
+    // box would be a claim we cannot back. The box is the user's to tick, and it
+    // survives a re-sync because ticking it does not change our text.
+    for (const a of actionItems) {
+      const text = String(a?.text ?? a).trim();
+      if (!text) continue;
+      const who = a?.owner || a?.assignee;
+      const due = a?.due || a?.due_date;
+      const tail = [who ? `@${who}` : null, due ? `📅 ${String(due).slice(0, 10)}` : null]
+        .filter(Boolean).join(' ');
+      out.push(`- [ ] ${text}${tail ? '  ' + tail : ''}`);
+    }
     out.push('');
   }
-  if (note.participants?.length) out.push(`**Participants:** ${note.participants.join(', ')}`, '');
+
+  if (flagged.length) {
+    out.push('## Needs a decision', '');
+    for (const f of flagged) {
+      const text = String(f?.text ?? f).trim();
+      if (text) out.push(`- ${text}`);
+    }
+    out.push('');
+  }
+
+  if (mentions.length) {
+    // Wikilinks, because this is the one thing a vault does that a transcript
+    // cannot: the person becomes a node, and the meeting shows up in their
+    // backlinks without anyone filing it there.
+    out.push('## People', '');
+    for (const m of mentions) {
+      const name = String(m?.name ?? m?.person ?? m).trim();
+      // Strip the link syntax, then collapse what it left behind — removing
+      // `[[` and `]]` from a name leaves a double space otherwise.
+      if (name) out.push(`- [[${name.replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim()}]]`);
+    }
+    out.push('');
+  }
+
+  if (memories.length) {
+    out.push('## What Scriben remembers', '');
+    for (const mem of memories) {
+      const text = String(mem?.text ?? mem).trim();
+      if (text) out.push(`- ${text}`);
+    }
+    out.push('');
+  }
+
   out.push(END);
   return out.join('\n');
 }

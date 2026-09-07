@@ -5,6 +5,14 @@ import { ScribenApi, unwrap, DEFAULT_HOST } from './api.mjs';
 import { fileNameFor, frontMatter, managedBody, mergeIntoExisting, userRegion } from './markdown.mjs';
 import { planPull, planPush, noteHash } from './plan.mjs';
 
+interface Detail {
+  summary: string | null;
+  actionItems: unknown[];
+  mentions: unknown[];
+  flagged: unknown[];
+  memories: unknown[];
+}
+
 interface Settings {
   host: string;
   token: string;
@@ -87,13 +95,23 @@ export default class ScribenPlugin extends Plugin {
       // Detail is fetched only for notes that might be written — on a vault
       // already in step this is zero extra calls, not fifty.
       const index = this.indexVault();
-      const detail = new Map<string, { summary: unknown; actionItems: unknown[] }>();
+      // ONE call per note. get_summary already returns the summary, the action
+      // items, the people mentioned and anything flagged — asking a second tool
+      // for the action items doubled the round trips to fetch what the first
+      // reply already carried.
+      const detail = new Map<string, Detail>();
       const hashes = new Map<string, string>();
       for (const note of listed) {
-        const s = unwrap(await api.summary(note.ref));
-        const a = unwrap(await api.actionItems(note.ref));
-        const extras = { summary: (s as any)?.summary ?? (s as any)?.text ?? null, actionItems: Array.isArray(a) ? a : [] };
-        detail.set(note.ref, extras as any);
+        const d = unwrap(await api.summary(note.ref)) as Record<string, unknown> | null;
+        const mem = unwrap(await api.recall(note.title ?? '')) as unknown[] | null;
+        const extras: Detail = {
+          summary: (d?.summary as string) ?? null,
+          actionItems: Array.isArray(d?.action_items) ? (d!.action_items as unknown[]) : [],
+          mentions: Array.isArray(d?.mentions) ? (d!.mentions as unknown[]) : [],
+          flagged: Array.isArray(d?.flagged) ? (d!.flagged as unknown[]) : [],
+          memories: Array.isArray(mem) ? mem.slice(0, 6) : [],
+        };
+        detail.set(note.ref, extras);
         hashes.set(note.ref, noteHash(note, extras));
       }
 
@@ -103,7 +121,8 @@ export default class ScribenPlugin extends Plugin {
       const { write, skip } = planPull(listed, index, hashes);
       let wrote = 0;
       for (const item of write) {
-        const extras = detail.get(item.ref) ?? { summary: null, actionItems: [] };
+        const extras = detail.get(item.ref)
+          ?? { summary: null, actionItems: [], mentions: [], flagged: [], memories: [] };
         const body = frontMatter(item.note, hashes.get(item.ref) ?? '') + '\n'
           + managedBody(item.note, extras as any);
         const path = item.path.includes('/') ? item.path : `${folder}/${item.path}`;
