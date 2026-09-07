@@ -7,6 +7,11 @@ on:
     tags: ['*']
 permissions:
   contents: write
+  # Artifact attestations let a user cryptographically verify that main.js was
+  # built from this source, rather than uploaded by hand. Obsidian's review asks
+  # for it, and it is the difference between "trust the author" and "check".
+  id-token: write
+  attestations: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,6 +22,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'main.js, manifest.json, styles.css'
       - uses: softprops/action-gh-release@v2
         with:
           files: |

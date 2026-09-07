@@ -60,6 +60,9 @@ export default class ScribenPlugin extends Plugin {
   /** ref -> { path, hash }, read from the vault itself rather than a sidecar. */
   private indexVault(): Map<string, { path: string; hash: string }> {
     const out = new Map<string, { path: string; hash: string }>();
+    // Frontmatter only, and only from the metadata cache Obsidian already keeps
+    // — no file is opened to build this. A file that carries no scriben_ref is
+    // read no further than the key check.
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as
         { scriben_ref?: string; scriben_hash?: string } | undefined;
@@ -128,8 +131,20 @@ export default class ScribenPlugin extends Plugin {
       new Notice('No folders are shared with Scriben. Choose them in settings.');
       return;
     }
+    // PATH FIRST, CONTENT SECOND. This used to read EVERY markdown file in the
+    // vault and then discard the ones out of scope — so a note in a private
+    // folder was loaded into memory to be thrown away, and Obsidian's own review
+    // flagged the plugin for enumerating the whole vault. Deciding on the path
+    // means a folder the user did not share is never opened at all.
+    const roots = this.settings.sharedFolders
+      .map((f) => f.replace(/^\/+|\/+$/g, ''))
+      .filter(Boolean);
+    const inScope = (path: string) =>
+      roots.some((r) => path === r || path.startsWith(r + '/'));
+
     const files: { path: string; body: string }[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!inScope(file.path)) continue;
       files.push({ path: file.path, body: userRegion(await this.app.vault.cachedRead(file)) });
     }
     const sent = new Map(Object.entries(this.settings.sentHashes));
