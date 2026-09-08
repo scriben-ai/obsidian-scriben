@@ -41,7 +41,7 @@ export default class ScribenPlugin extends Plugin {
     await this.loadSettings();
     this.addSettingTab(new ScribenSettingTab(this.app, this));
 
-    this.addRibbonIcon('microphone', 'Sync Scriben meetings', () => this.pull());
+    this.addRibbonIcon('microphone', 'Sync meetings', () => this.pull());
     this.addCommand({ id: 'sync', name: 'Sync meetings', callback: () => this.pull() });
     this.addCommand({ id: 'share', name: 'Share chosen notes', callback: () => this.push() });
 
@@ -194,7 +194,7 @@ class PairModal extends Modal {
     // settings tab.
     this.setTitle('Connect Scriben');
     contentEl.createEl('p', { text: 'Approve this vault in your browser, then enter the code shown there:' });
-    contentEl.createEl('div', { text: this.code, cls: 'scriben-pair-code' });
+    contentEl.createDiv({ text: this.code, cls: 'scriben-pair-code' });
     contentEl.createEl('p', {
       text: 'This window closes on its own once approved.',
       cls: 'scriben-hint',
@@ -235,7 +235,7 @@ class ScribenSettingTab extends PluginSettingTab {
     new Setting(containerEl).addButton((b) => b.setButtonText('Sync now').onClick(() => this.plugin.pull()));
 
     // --- notes out ----------------------------------------------------------
-    new Setting(containerEl).setName('Your notes back to Scriben').setHeading();
+    new Setting(containerEl).setName('Notes you share back').setHeading();
     containerEl.createEl('p', {
       text: 'Scriben reads only the folders you name here, so it can answer with your own context. Everything else in this vault stays private.',
       cls: 'scriben-note',
