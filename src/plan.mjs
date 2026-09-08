@@ -40,6 +40,7 @@ function fingerprint(text) {
 const utf8Bytes = (s) => new TextEncoder().encode(String(s)).length;
 
 /** Identity of a note's CONTENT, so an unchanged note is not rewritten. */
+/** @param {import('./types').ScribenNote} note @param {import('./types').NoteExtras} [extras] @returns {string} */
 export function noteHash(note, extras = {}) {
   return fingerprint(JSON.stringify([
     note?.ref ?? '', note?.title ?? '', note?.date ?? '', note?.type ?? '',

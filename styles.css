@@ -1,4 +1,6 @@
-/* The pairing code is the only thing on screen that matters while it is shown. */
+/* Styles live here, not in element.style. Obsidian's review flags inline
+   cssText because a theme cannot override it and a user cannot restyle it. */
+
 .scriben-pair-code {
   font: 600 26px/1.4 var(--font-monospace);
   letter-spacing: 0.18em;
@@ -6,7 +8,14 @@
   margin: 14px 0;
   user-select: all;
 }
+
 .scriben-hint {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.scriben-note {
   opacity: 0.65;
   font-size: 12px;
+  margin: -4px 0 10px;
 }

@@ -27,6 +27,7 @@ const UNSAFE = /[\\/:*?"<>|#^[\]]/g;
  * truncated. 80 chars keeps the whole path under the 255-byte limit even when
  * the vault sits several folders deep on an encrypted volume.
  */
+/** @param {import('./types').ScribenNote} note @returns {string|null} */
 export function fileNameFor(note) {
   const ref = String(note?.ref ?? '').trim();
   if (!ref) return null;
@@ -46,6 +47,7 @@ const yamlList = (xs) => (xs?.length ? '\n' + xs.map((x) => `  - ${yamlString(x)
  * every note, and Obsidian's own file-watcher then reports the whole vault as
  * modified to whatever else the user syncs with.
  */
+/** @param {import('./types').ScribenNote} note @param {string} hash @returns {string} */
 export function frontMatter(note, hash) {
   const lines = [
     '---',
@@ -73,6 +75,11 @@ export function frontMatter(note, hash) {
  * are omitted rather than printed as headings with nothing under them — a run
  * of empty headings makes a note look broken, and Obsidian's outline fills with
  * dead entries.
+ */
+/**
+ * @param {import('./types').ScribenNote} note
+ * @param {import('./types').NoteExtras} [extras]
+ * @returns {string}
  */
 export function managedBody(note, {
   summary = null, actionItems = [], mentions = [], memories = [], flagged = [],
@@ -150,6 +157,7 @@ export function managedBody(note, {
  * append rather than overwrite, because the alternative is deleting a note
  * somebody wrote.
  */
+/** @param {string} existing @param {string} managed @returns {string} */
 export function mergeIntoExisting(existing, managed) {
   if (!existing) return managed + '\n';
   const start = existing.indexOf(BEGIN);
@@ -161,6 +169,7 @@ export function mergeIntoExisting(existing, managed) {
 }
 
 /** Everything OUTSIDE our markers — what the user wrote, for the read direction. */
+/** @param {string} content @returns {string} */
 export function userRegion(content) {
   const s = String(content ?? '');
   const start = s.indexOf(BEGIN);
