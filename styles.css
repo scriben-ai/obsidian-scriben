@@ -19,3 +19,10 @@
   font-size: 12px;
   margin: -4px 0 10px;
 }
+
+/* Disconnect is destructive, so it reads as destructive. Done with a class
+   rather than setDestructive(), which requires Obsidian 1.13 — a red button is
+   not worth shutting out everyone on an older version. */
+.scriben-danger {
+  color: var(--text-error);
+}

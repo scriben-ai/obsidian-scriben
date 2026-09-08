@@ -11,7 +11,8 @@ and — only for folders you name — lets Scriben read what you have written.
 
 **Meetings into your vault.** Each recording becomes one markdown note with
 frontmatter, a summary and unchecked action items, filed in a folder you pick.
-Sync runs when Obsidian opens, or on demand.
+Sync runs when Obsidian opens, on a schedule you choose, or whenever you press
+the microphone in the ribbon.
 
 **Your notes back to Scriben.** Off by default. When you turn it on you name the
 folders, and only those folders are ever read. Everything else in the vault
@@ -82,12 +83,17 @@ the vault; nothing is deleted.
 |---|---|
 | **Folder** | where meeting notes are filed (default `Scriben`) |
 | **Sync when Obsidian opens** | on |
+| **Keep syncing in the background** | off; when on, every 15 minutes to 6 hours |
 | **Share chosen folders** | off |
 | **Folders** | one per line; empty shares nothing |
 
+The Connection line tells you what is happening without a "test" button — who
+you are connected as, how many meeting notes are in the vault, and when the last
+sync ran.
+
 ## Requirements
 
-A Scriben account. Desktop and mobile both work.
+A Scriben account, and Obsidian 1.4.0 or newer. Desktop and mobile both work.
 
 ## Development
 

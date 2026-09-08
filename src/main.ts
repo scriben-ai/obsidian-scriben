@@ -5,6 +5,7 @@ import { ScribenApi, unwrap, DEFAULT_HOST } from './api.mjs';
 import { frontMatter, managedBody, mergeIntoExisting, userRegion } from './markdown.mjs';
 import type { ScribenNote, NoteExtras, ActionItem, Mention, MemoryFact } from './types';
 import { planPull, planPush, noteHash } from './plan.mjs';
+import { SYNC_CHOICES, syncIntervalMs, connectionSummary, syncNotice } from './human.mjs';
 
 type Detail = Required<Pick<NoteExtras, 'summary' | 'actionItems' | 'mentions' | 'flagged' | 'memories'>>;
 
@@ -15,8 +16,13 @@ interface Settings {
   notesFolder: string;
   sharedFolders: string[];
   syncOnStartup: boolean;
+  autoSync: boolean;
+  autoSyncMinutes: number;
   shareBack: boolean;
   sentHashes: Record<string, string>;
+  /** Shown in settings so a user can see it is working without pressing "test". */
+  lastSyncAt: number;
+  lastSyncCount: number;
 }
 
 const DEFAULTS: Settings = {
@@ -29,13 +35,21 @@ const DEFAULTS: Settings = {
   // the first time someone flicked the toggle.
   sharedFolders: [],
   syncOnStartup: true,
+  // Off by default: an interval that starts on install is a background network
+  // request nobody asked for. The user turns it on once and forgets it.
+  autoSync: false,
+  autoSyncMinutes: 60,
   shareBack: false,
   sentHashes: {},
+  lastSyncAt: 0,
+  lastSyncCount: 0,
 };
 
 export default class ScribenPlugin extends Plugin {
   settings: Settings = { ...DEFAULTS };
   private syncing = false;
+  private sharing = false;
+  private autoSyncId: number | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -50,6 +64,37 @@ export default class ScribenPlugin extends Plugin {
     // ready reports every note as new and refiles the lot.
     if (this.settings.syncOnStartup && this.settings.token) {
       this.app.workspace.onLayoutReady(() => { void this.pull(true); });
+    }
+    this.restartAutoSync();
+  }
+
+  /**
+   * Auto-sync, rebuilt whenever the setting or the connection changes.
+   *
+   * The old timer is cleared first: toggling the interval three times used to
+   * leave three timers running, so the plugin synced three times as often as
+   * the user asked and there was no way to tell from the UI.
+   */
+  restartAutoSync() {
+    if (this.autoSyncId !== null) { window.clearInterval(this.autoSyncId); this.autoSyncId = null; }
+    if (!this.settings.autoSync || !this.settings.token) return;
+    this.autoSyncId = window.setInterval(
+      () => { void this.autoSync(); },
+      syncIntervalMs(this.settings.autoSyncMinutes),
+    );
+    this.registerInterval(this.autoSyncId);
+  }
+
+  /** Quiet on purpose: a background sync that finds nothing says nothing. */
+  private async autoSync() {
+    if (!this.settings.token) return;
+    try {
+      await this.pull(true);
+      if (this.settings.shareBack && this.settings.sharedFolders.length) await this.push(true);
+    } catch {
+      // A background sync stays quiet about its own failure: the user did not
+      // ask for it, a dropped wifi connection is not worth a popup, and the
+      // next tick tries again. pull() still reports failures it was asked for.
     }
   }
 
@@ -135,7 +180,11 @@ export default class ScribenPlugin extends Plugin {
         }
         wrote++;
       }
-      if (!quiet || wrote) new Notice(`Scriben: ${wrote} updated, ${skip.length} already current.`);
+      this.settings.lastSyncAt = Date.now();
+      this.settings.lastSyncCount = write.length + skip.length;
+      await this.saveSettings();
+      const said = syncNotice(wrote, quiet);
+      if (said) new Notice(said);
     } catch (e) {
       new Notice(`Scriben sync failed: ${(e as Error)?.message ?? 'unknown error'}`);
     } finally {
@@ -144,38 +193,47 @@ export default class ScribenPlugin extends Plugin {
   }
 
   // ------------------------------------------------------------ vault -> Scriben
-  async push() {
-    if (!this.settings.token) { new Notice('Connect your account first.'); return; }
+  async push(quiet = false) {
+    if (!this.settings.token) { if (!quiet) new Notice('Connect your account first.'); return; }
     if (!this.settings.shareBack || !this.settings.sharedFolders.length) {
-      new Notice('No folders are shared yet. Choose them in settings.');
+      if (!quiet) new Notice('No folders are shared yet. Choose them in settings.');
       return;
     }
-    // PATH FIRST, CONTENT SECOND. This used to read EVERY markdown file in the
-    // vault and then discard the ones out of scope — so a note in a private
-    // folder was loaded into memory to be thrown away, and Obsidian's own review
-    // flagged the plugin for enumerating the whole vault. Deciding on the path
-    // means a folder the user did not share is never opened at all.
-    const roots = this.settings.sharedFolders
-      .map((f) => f.replace(/^\/+|\/+$/g, ''))
-      .filter(Boolean);
-    const inScope = (path: string) =>
-      roots.some((r) => path === r || path.startsWith(r + '/'));
+    // Auto-sync can call this while the user is also pressing "Share now". Two
+    // runs would read the same files and send them twice, because sentHashes is
+    // only written after the request comes back.
+    if (this.sharing) return;
+    this.sharing = true;
+    try {
+      // PATH FIRST, CONTENT SECOND. This used to read EVERY markdown file in the
+      // vault and then discard the ones out of scope — so a note in a private
+      // folder was loaded into memory to be thrown away, and Obsidian's own review
+      // flagged the plugin for enumerating the whole vault. Deciding on the path
+      // means a folder the user did not share is never opened at all.
+      const roots = this.settings.sharedFolders
+        .map((f) => f.replace(/^\/+|\/+$/g, ''))
+        .filter(Boolean);
+      const inScope = (path: string) =>
+        roots.some((r) => path === r || path.startsWith(r + '/'));
 
-    const files: { path: string; body: string }[] = [];
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      if (!inScope(file.path)) continue;
-      files.push({ path: file.path, body: userRegion(await this.app.vault.cachedRead(file)) });
+      const files: { path: string; body: string }[] = [];
+      for (const file of this.app.vault.getMarkdownFiles()) {
+        if (!inScope(file.path)) continue;
+        files.push({ path: file.path, body: userRegion(await this.app.vault.cachedRead(file)) });
+      }
+      const sent = new Map(Object.entries(this.settings.sentHashes));
+      const { send } = planPush(files, { folders: this.settings.sharedFolders, sent });
+      if (!send.length) { if (!quiet) new Notice('Scriben: nothing new to share.'); return; }
+
+      const res = await this.api().pushVaultNotes(send.map((s) => ({ path: s.path, text: s.body })));
+      if (res.status === 404) { if (!quiet) new Notice('This account cannot receive vault notes yet.'); return; }
+      if (res.status !== 200) { if (!quiet) new Notice(`Scriben could not take the notes (${res.status}).`); return; }
+      for (const s of send) this.settings.sentHashes[s.path] = s.hash;
+      await this.saveSettings();
+      if (!quiet) new Notice(`Scriben: shared ${send.length} note${send.length === 1 ? '' : 's'}.`);
+    } finally {
+      this.sharing = false;
     }
-    const sent = new Map(Object.entries(this.settings.sentHashes));
-    const { send, skipped } = planPush(files, { folders: this.settings.sharedFolders, sent });
-    if (!send.length) { new Notice(`Scriben: nothing new to share (${skipped.length} unchanged or out of scope).`); return; }
-
-    const res = await this.api().pushVaultNotes(send.map((s) => ({ path: s.path, text: s.body })));
-    if (res.status === 404) { new Notice('This account cannot receive vault notes yet.'); return; }
-    if (res.status !== 200) { new Notice(`Scriben rejected the notes (${res.status}).`); return; }
-    for (const s of send) this.settings.sentHashes[s.path] = s.hash;
-    await this.saveSettings();
-    new Notice(`Scriben: shared ${send.length} note${send.length === 1 ? '' : 's'}.`);
   }
 
   async disconnect() {
@@ -184,6 +242,7 @@ export default class ScribenPlugin extends Plugin {
     this.settings.sentHashes = {};
     await this.saveSettings();
     new Notice('Scriben disconnected. Your notes stay in the vault.');
+    this.restartAutoSync();   // no token, no background timer
   }
 }
 
@@ -220,7 +279,12 @@ class PairModal extends Modal {
 class ScribenSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: ScribenPlugin) { super(app, plugin); }
 
-  display() {
+  // Obsidian calls display(); everything inside this class refreshes through
+  // render(). Calling this.display() ourselves is deprecated as of 1.13, but the
+  // override is still how a settings tab is drawn on the 1.4 we support.
+  display() { this.render(); }
+
+  private render() {
     const { containerEl } = this;
     containerEl.empty();
     const s = this.plugin.settings;
@@ -228,9 +292,12 @@ class ScribenSettingTab extends PluginSettingTab {
     // --- connection ---------------------------------------------------------
     const conn = new Setting(containerEl).setName('Connection');
     if (s.token) {
-      conn.setDesc(s.account ? `Connected as ${s.account}` : 'Connected');
-      conn.addButton((b) => b.setButtonText('Disconnect').setDestructive()
-        .onClick(async () => { await this.plugin.disconnect(); this.display(); }));
+      conn.setDesc(connectionSummary(s));
+      // setClass, not setDestructive: setDestructive arrived in Obsidian 1.13
+      // and was the ONLY thing forcing minAppVersion 1.13.0 — a red button was
+      // shutting out every user on an older Obsidian. setClass is from 0.9.7.
+      conn.addButton((b) => b.setButtonText('Disconnect').setClass('scriben-danger')
+        .onClick(async () => { await this.plugin.disconnect(); this.render(); }));
     } else {
       conn.setDesc('Not connected. Scriben will not read or write anything until you connect.');
       conn.addButton((b) => b.setButtonText('Connect').setCta().onClick(() => this.pair()));
@@ -245,7 +312,35 @@ class ScribenSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Sync when Obsidian opens')
       .addToggle((t) => t.setValue(s.syncOnStartup)
         .onChange(async (v) => { s.syncOnStartup = v; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).addButton((b) => b.setButtonText('Sync now').onClick(() => this.plugin.pull()));
+
+    new Setting(containerEl).setName('Keep syncing in the background')
+      .setDesc('Check for new meetings while Obsidian stays open.')
+      .addToggle((t) => t.setValue(s.autoSync)
+        .onChange(async (v) => {
+          s.autoSync = v;
+          await this.plugin.saveSettings();
+          this.plugin.restartAutoSync();
+          this.render();
+        }));
+
+    if (s.autoSync) {
+      new Setting(containerEl).setName('How often')
+        .addDropdown((d) => {
+          for (const m of SYNC_CHOICES) {
+            d.addOption(String(m), m < 60 ? `Every ${m} minutes`
+              : m === 60 ? 'Every hour' : `Every ${m / 60} hours`);
+          }
+          d.setValue(String(s.autoSyncMinutes))
+            .onChange(async (v) => {
+              s.autoSyncMinutes = Number(v);
+              await this.plugin.saveSettings();
+              this.plugin.restartAutoSync();
+            });
+        });
+    }
+
+    new Setting(containerEl).addButton((b) => b.setButtonText('Sync now')
+      .onClick(async () => { await this.plugin.pull(); this.render(); }));
 
     // --- notes out ----------------------------------------------------------
     new Setting(containerEl).setName('Notes you share back').setHeading();
@@ -256,7 +351,7 @@ class ScribenSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Share chosen folders')
       .addToggle((t) => t.setValue(s.shareBack)
-        .onChange(async (v) => { s.shareBack = v; await this.plugin.saveSettings(); this.display(); }));
+        .onChange(async (v) => { s.shareBack = v; await this.plugin.saveSettings(); this.render(); }));
 
     if (s.shareBack) {
       new Setting(containerEl).setName('Folders')
@@ -292,9 +387,11 @@ class ScribenSettingTab extends PluginSettingTab {
         const who = await this.plugin.api().whoami();
         this.plugin.settings.account = who.data?.email ?? who.data?.data?.email ?? '';
         await this.plugin.saveSettings();
+        // Now that there is a token, the background timer can actually run.
+        this.plugin.restartAutoSync();
         modal.close();
         new Notice('Scriben connected.');
-        this.display();
+        this.render();
         void this.plugin.pull(true);
         return;
       }
