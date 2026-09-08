@@ -28,7 +28,10 @@ export class ScribenApi {
     return { status, data };
   }
 
-  /** Step 1 of pairing: ask for a code the human will retype in the browser. */
+  /**
+   * Step 1 of pairing: ask for a code the human will retype in the browser.
+   * @returns {Promise<import('./types').ApiResult<import('./types').PairingStart>>}
+   */
   startPairing(deviceLabel) {
     return this.#json('/api/mcp/connect/init', {
       method: 'POST', auth: false,
@@ -37,6 +40,7 @@ export class ScribenApi {
   }
 
   /** Step 2: poll. 428 means "the human has not approved yet" and is not an error. */
+  /** @returns {Promise<import('./types').ApiResult<import('./types').PairingToken>>} */
   claimToken(requestId) {
     return this.#json('/api/mcp/connect/token', {
       method: 'POST', auth: false, body: { request_id: requestId },
@@ -47,6 +51,7 @@ export class ScribenApi {
     return `${this.host}/mcp/connect?code=${encodeURIComponent(userCode)}`;
   }
 
+  /** @returns {Promise<import('./types').ApiResult<import('./types').WhoAmI>>} */
   whoami() { return this.#json('/api/mcp/whoami'); }
 
   /**
@@ -70,5 +75,13 @@ export class ScribenApi {
   }
 }
 
-/** `data` is the envelope every tool answers with; unwrap it in exactly one place. */
+/**
+ * `data` is the envelope every tool answers with; unwrap it in exactly one place.
+ *
+ * Returns `unknown`, not `any`, deliberately: the caller has to say which shape
+ * it expects. An `any` here spread through the whole plugin and was most of the
+ * review's warnings.
+ * @param {{ status?: number, data?: { data?: unknown } | null } | null} [r]
+ * @returns {unknown}
+ */
 export const unwrap = (r) => (r?.status === 200 ? (r.data?.data ?? null) : null);

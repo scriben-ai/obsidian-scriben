@@ -59,9 +59,10 @@ export function noteHash(note, extras = {}) {
  * did. The vault IS the state.
  */
 /**
- * @param {any[]} notes
+ * @param {import('./types').ScribenNote[]} notes
  * @param {Map<string,{path:string,hash:string}>} [existing]
  * @param {Map<string,string>} [hashes]
+ * @returns {{ write: import('./types').PullItem[], skip: {ref:string,path:string}[] }}
  */
 export function planPull(notes, existing = new Map(), hashes = new Map()) {
   const write = [];

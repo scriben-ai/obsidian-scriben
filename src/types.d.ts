@@ -25,5 +25,12 @@ export interface NoteExtras {
   memories?: MemoryFact[];
 }
 
+/** What `ScribenApi` hands back: the HTTP status, and the parsed body or null. */
+export interface ApiResult<T> { status: number; data: T | null; }
+
+export interface PairingStart { user_code?: string; request_id?: string; expires_in?: number; }
+export interface PairingToken { token?: string; }
+export interface WhoAmI { email?: string; data?: { email?: string } | null; }
+
 export interface VaultEntry { path: string; hash: string; }
 export interface PullItem { ref: string; path: string; note: ScribenNote; renamed: boolean; }

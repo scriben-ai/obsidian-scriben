@@ -1,7 +1,7 @@
 {
 	"id": "scriben",
 	"name": "Scriben",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"minAppVersion": "1.13.0",
 	"description": "Sync your Scriben meeting notes into this vault, and let Scriben read the notes you choose to share back.",
 	"author": "Scriben",

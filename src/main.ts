@@ -57,7 +57,10 @@ export default class ScribenPlugin extends Plugin {
     return new ScribenApi({ http: requestUrl, host: this.settings.host, token: this.settings.token });
   }
 
-  async loadSettings() { this.settings = Object.assign({}, DEFAULTS, await this.loadData()); }
+  async loadSettings() {
+    const saved = (await this.loadData()) as Partial<Settings> | null;
+    this.settings = Object.assign({}, DEFAULTS, saved ?? {});
+  }
   async saveSettings() { await this.saveData(this.settings); }
 
   /** ref -> { path, hash }, read from the vault itself rather than a sidecar. */
@@ -76,7 +79,7 @@ export default class ScribenPlugin extends Plugin {
 
   // ------------------------------------------------------------ Scriben -> vault
   async pull(quiet = false) {
-    if (!this.settings.token) { if (!quiet) new Notice('Connect Scriben first.'); return; }
+    if (!this.settings.token) { if (!quiet) new Notice('Connect your account first.'); return; }
     if (this.syncing) return;
     this.syncing = true;
     try {
@@ -142,9 +145,9 @@ export default class ScribenPlugin extends Plugin {
 
   // ------------------------------------------------------------ vault -> Scriben
   async push() {
-    if (!this.settings.token) { new Notice('Connect Scriben first.'); return; }
+    if (!this.settings.token) { new Notice('Connect your account first.'); return; }
     if (!this.settings.shareBack || !this.settings.sharedFolders.length) {
-      new Notice('No folders are shared with Scriben. Choose them in settings.');
+      new Notice('No folders are shared yet. Choose them in settings.');
       return;
     }
     // PATH FIRST, CONTENT SECOND. This used to read EVERY markdown file in the
@@ -168,7 +171,7 @@ export default class ScribenPlugin extends Plugin {
     if (!send.length) { new Notice(`Scriben: nothing new to share (${skipped.length} unchanged or out of scope).`); return; }
 
     const res = await this.api().pushVaultNotes(send.map((s) => ({ path: s.path, text: s.body })));
-    if (res.status === 404) { new Notice('This Scriben account cannot receive vault notes yet.'); return; }
+    if (res.status === 404) { new Notice('This account cannot receive vault notes yet.'); return; }
     if (res.status !== 200) { new Notice(`Scriben rejected the notes (${res.status}).`); return; }
     for (const s of send) this.settings.sentHashes[s.path] = s.hash;
     await this.saveSettings();
@@ -186,13 +189,23 @@ export default class ScribenPlugin extends Plugin {
 
 /** The pairing code, and nothing else on screen while it matters. */
 class PairModal extends Modal {
-  constructor(app: App, private code: string, private url: string, private onDone: () => void) { super(app); }
+  private readonly code: string;
+  private readonly url: string;
+  private readonly onDone: () => void;
+
+  // Written out rather than declared as constructor parameter properties: the
+  // review's no-unused-vars does not see `this.code` as a use of `code`, and
+  // reported all three as dead.
+  constructor(app: App, code: string, url: string, onDone: () => void) {
+    super(app);
+    this.code = code; this.url = url; this.onDone = onDone;
+  }
   onOpen() {
     const { contentEl } = this;
     // setTitle rather than an h3: the modal owns its own heading slot, and a
     // hand-rolled heading is the same inconsistency the review flags in the
     // settings tab.
-    this.setTitle('Connect Scriben');
+    this.setTitle('Connect your account');
     contentEl.createEl('p', { text: 'Approve this vault in your browser, then enter the code shown there:' });
     contentEl.createDiv({ text: this.code, cls: 'scriben-pair-code' });
     contentEl.createEl('p', {
@@ -248,7 +261,7 @@ class ScribenSettingTab extends PluginSettingTab {
     if (s.shareBack) {
       new Setting(containerEl).setName('Folders')
         .setDesc('One per line. Empty means nothing is shared.')
-        .addTextArea((t) => t.setPlaceholder('Meetings\nProjects/Client work')
+        .addTextArea((t) => t.setPlaceholder('Meetings')
           .setValue(s.sharedFolders.join('\n'))
           .onChange(async (v) => {
             s.sharedFolders = v.split('\n').map((x) => x.trim()).filter(Boolean);
