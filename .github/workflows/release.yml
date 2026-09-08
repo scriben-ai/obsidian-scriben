@@ -28,6 +28,10 @@ jobs:
           subject-path: 'main.js, manifest.json, styles.css'
       - uses: softprops/action-gh-release@v2
         with:
+          # A release with an empty body is a finding in Obsidian's review, and a
+          # bare `git push --tags` produces exactly that. Generated notes are the
+          # floor; edit the release afterwards when the change deserves prose.
+          generate_release_notes: true
           files: |
             main.js
             manifest.json
