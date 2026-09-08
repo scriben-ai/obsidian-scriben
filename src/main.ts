@@ -1,11 +1,14 @@
 import {
-  App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, normalizePath, requestUrl,
+  App, ButtonComponent, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder,
+  normalizePath, requestUrl,
 } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import { ScribenApi, unwrap, DEFAULT_HOST } from './api.mjs';
 import { frontMatter, managedBody, mergeIntoExisting, userRegion } from './markdown.mjs';
 import type { ScribenNote, NoteExtras, ActionItem, Mention, MemoryFact } from './types';
 import { planPull, planPush, noteHash } from './plan.mjs';
-import { SYNC_CHOICES, syncIntervalMs, connectionSummary, syncNotice } from './human.mjs';
+import { SYNC_CHOICES, syncIntervalMs, connectionSummary, syncNotice, intervalLabel, intervalOptions } from './human.mjs';
+import { controlValue, applyControlValue } from './settingsBridge.mjs';
 
 type Detail = Required<Pick<NoteExtras, 'summary' | 'actionItems' | 'mentions' | 'flagged' | 'memories'>>;
 
@@ -108,13 +111,40 @@ export default class ScribenPlugin extends Plugin {
   }
   async saveSettings() { await this.saveData(this.settings); }
 
+  /**
+   * Every markdown file under `root`, and nothing else.
+   *
+   * Deliberately not the vault-wide listing helpers. Those hand back every file
+   * in the vault, which Obsidian's review discloses to users as "gives the plugin
+   * access to every file path in the vault" — and it contradicts the promise this
+   * plugin makes, that it looks only where you tell it to. Descending from a named
+   * folder means a folder the user did not name is never even listed.
+   *
+   * The name is spelled out nowhere on purpose: the review reads source, and a
+   * mention in a comment is the same kind of false positive that once made one of
+   * our own tests pass against broken code (mobile GOTCHAS #96).
+   */
+  private filesUnder(root: string): TFile[] {
+    const out: TFile[] = [];
+    const start = this.app.vault.getAbstractFileByPath(normalizePath(root));
+    if (!(start instanceof TFolder)) return out;
+    const stack: TFolder[] = [start];
+    for (let folder = stack.pop(); folder; folder = stack.pop()) {
+      for (const child of folder.children) {
+        if (child instanceof TFolder) stack.push(child);
+        else if (child instanceof TFile && child.extension === 'md') out.push(child);
+      }
+    }
+    return out;
+  }
+
   /** ref -> { path, hash }, read from the vault itself rather than a sidecar. */
   private indexVault(): Map<string, { path: string; hash: string }> {
     const out = new Map<string, { path: string; hash: string }>();
     // Frontmatter only, and only from the metadata cache Obsidian already keeps
     // — no file is opened to build this. A file that carries no scriben_ref is
     // read no further than the key check.
-    for (const file of this.app.vault.getMarkdownFiles()) {
+    for (const file of this.filesUnder(this.settings.notesFolder || 'Scriben')) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as
         { scriben_ref?: string; scriben_hash?: string } | undefined;
       if (fm?.scriben_ref) out.set(String(fm.scriben_ref), { path: file.path, hash: String(fm.scriben_hash ?? '') });
@@ -217,9 +247,15 @@ export default class ScribenPlugin extends Plugin {
         roots.some((r) => path === r || path.startsWith(r + '/'));
 
       const files: { path: string; body: string }[] = [];
-      for (const file of this.app.vault.getMarkdownFiles()) {
-        if (!inScope(file.path)) continue;
-        files.push({ path: file.path, body: userRegion(await this.app.vault.cachedRead(file)) });
+      const seen = new Set<string>();
+      for (const root of roots) {
+        for (const file of this.filesUnder(root)) {
+          // Overlapping entries ("Work" and "Work/1:1s") would otherwise send the
+          // same note twice in one request.
+          if (seen.has(file.path) || !inScope(file.path)) continue;
+          seen.add(file.path);
+          files.push({ path: file.path, body: userRegion(await this.app.vault.cachedRead(file)) });
+        }
       }
       const sent = new Map(Object.entries(this.settings.sentHashes));
       const { send } = planPush(files, { folders: this.settings.sharedFolders, sent });
@@ -279,9 +315,106 @@ class PairModal extends Modal {
 class ScribenSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: ScribenPlugin) { super(app, plugin); }
 
-  // Obsidian calls display(); everything inside this class refreshes through
-  // render(). Calling this.display() ourselves is deprecated as of 1.13, but the
-  // override is still how a settings tab is drawn on the 1.4 we support.
+  /**
+   * Obsidian 1.13+ renders this tab from these definitions and never calls
+   * display(), which is also what puts each setting into the settings search.
+   * display() below stays as the fallback for the 1.4 we still support — the
+   * arrangement the API documents for exactly this case.
+   *
+   * Conversions live in settingsBridge.mjs and are tested there: this is the one
+   * path we cannot exercise by running the plugin, and it is the settings tab,
+   * which is the only way anyone connects.
+   */
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    const s = this.plugin.settings;
+    return [
+      {
+        name: 'Connection',
+        desc: s.token
+          ? connectionSummary(s)
+          : 'Not connected. Scriben will not read or write anything until you connect.',
+        action: (el: HTMLElement) => {
+          const b = new ButtonComponent(el);
+          if (s.token) {
+            b.setButtonText('Disconnect').setClass('scriben-danger')
+              .onClick(() => { void this.plugin.disconnect(); });
+          } else {
+            b.setButtonText('Connect').setCta().onClick(() => { void this.pair(); });
+          }
+        },
+      },
+      {
+        type: 'group',
+        heading: 'Meetings into this vault',
+        items: [
+          {
+            name: 'Folder',
+            desc: 'Where synced meeting notes are filed.',
+            control: { type: 'text', key: 'notesFolder', placeholder: 'Scriben' },
+          },
+          { name: 'Sync when Obsidian opens', control: { type: 'toggle', key: 'syncOnStartup' } },
+          {
+            name: 'Keep syncing in the background',
+            desc: 'Check for new meetings while Obsidian stays open.',
+            control: { type: 'toggle', key: 'autoSync' },
+          },
+          {
+            name: 'How often',
+            visible: () => this.plugin.settings.autoSync,
+            control: { type: 'dropdown', key: 'autoSyncMinutes', options: intervalOptions() },
+          },
+          {
+            name: 'Sync now',
+            action: (el: HTMLElement) => {
+              new ButtonComponent(el).setButtonText('Sync now')
+                .onClick(() => { void this.plugin.pull(); });
+            },
+          },
+        ],
+      },
+      {
+        type: 'group',
+        heading: 'Notes you share back',
+        items: [
+          {
+            name: 'Share chosen folders',
+            desc: 'Scriben reads only the folders you name here, so it can answer with your own '
+              + 'context. Everything else in this vault stays private.',
+            control: { type: 'toggle', key: 'shareBack' },
+          },
+          {
+            name: 'Folders',
+            desc: 'One per line. Empty means nothing is shared.',
+            visible: () => this.plugin.settings.shareBack,
+            control: { type: 'textarea', key: 'sharedFolders', placeholder: 'Meetings', rows: 4 },
+          },
+          {
+            name: 'Share now',
+            visible: () => this.plugin.settings.shareBack,
+            action: (el: HTMLElement) => {
+              new ButtonComponent(el).setButtonText('Share now')
+                .onClick(() => { void this.plugin.push(); });
+            },
+          },
+        ],
+      },
+    ];
+  }
+
+  getControlValue(key: string): unknown {
+    return controlValue(this.plugin.settings as unknown as Record<string, unknown>, key);
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    const out = applyControlValue(
+      this.plugin.settings as unknown as Record<string, unknown>, key, value);
+    if (!out.changed) return;
+    await this.plugin.saveSettings();
+    if (out.restartTimer) this.plugin.restartAutoSync();
+  }
+
+  // The fallback renderer for Obsidian older than 1.13, where the declarative
+  // definitions above are never read.
   display() { this.render(); }
 
   private render() {
@@ -327,8 +460,7 @@ class ScribenSettingTab extends PluginSettingTab {
       new Setting(containerEl).setName('How often')
         .addDropdown((d) => {
           for (const m of SYNC_CHOICES) {
-            d.addOption(String(m), m < 60 ? `Every ${m} minutes`
-              : m === 60 ? 'Every hour' : `Every ${m / 60} hours`);
+            d.addOption(String(m), intervalLabel(m));
           }
           d.setValue(String(s.autoSyncMinutes))
             .onChange(async (v) => {

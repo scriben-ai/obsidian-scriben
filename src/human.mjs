@@ -62,3 +62,15 @@ export function syncNotice(wrote, quiet) {
   if (wrote > 0) return `Scriben: ${wrote} new meeting note${wrote === 1 ? '' : 's'}.`;
   return quiet ? null : 'Scriben: your meetings are up to date.';
 }
+
+/** Label for one interval. Shared, so the two settings paths cannot word it differently. */
+export function intervalLabel(m) {
+  if (m < 60) return `Every ${m} minutes`;
+  if (m === 60) return 'Every hour';
+  return `Every ${m / 60} hours`;
+}
+
+/** The dropdown's options, keyed by string because that is what the control reads. */
+export function intervalOptions() {
+  return Object.fromEntries(SYNC_CHOICES.map((m) => [String(m), intervalLabel(m)]));
+}

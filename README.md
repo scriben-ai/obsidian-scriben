@@ -48,6 +48,9 @@ your `[[wikilinks]]` keep resolving.
 
 ## What is read, and what is not
 
+- Scriben looks for its own notes inside the folder you chose, and nowhere else.
+  It never lists the rest of your vault. If you move a synced note somewhere
+  else, the next sync writes a fresh copy back in that folder.
 - Nothing is shared until you turn on **Share chosen folders** *and* name at
   least one folder. The default is empty, and empty means nothing is sent.
 - Only `.md` files inside those folders are read. Subfolders count; a folder

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sinceLabel, connectionSummary, syncNotice, syncIntervalMs, SYNC_CHOICES } from '../src/human.mjs';
+import { sinceLabel, connectionSummary, syncNotice, syncIntervalMs, SYNC_CHOICES, intervalLabel, intervalOptions } from '../src/human.mjs';
 
 /**
  * The plugin used to say "Connected" and nothing else, and a finished sync said
@@ -66,4 +66,17 @@ test('a corrupt interval cannot turn into a request loop', () => {
 
 test('every offered interval survives the clamp unchanged', () => {
   for (const m of SYNC_CHOICES) assert.equal(syncIntervalMs(m), m * 60_000, `${m} minutes`);
+});
+
+test('interval labels read like English, not like minutes', () => {
+  assert.equal(intervalLabel(15), 'Every 15 minutes');
+  assert.equal(intervalLabel(60), 'Every hour', 'not "Every 60 minutes"');
+  assert.equal(intervalLabel(180), 'Every 3 hours');
+  assert.equal(intervalLabel(360), 'Every 6 hours');
+});
+
+test('the dropdown is keyed by string, matching what the control reads back', () => {
+  const opts = intervalOptions();
+  assert.deepEqual(Object.keys(opts), SYNC_CHOICES.map(String));
+  assert.equal(opts['60'], 'Every hour');
 });
